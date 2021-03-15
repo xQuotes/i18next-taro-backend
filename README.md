@@ -13,6 +13,44 @@ Source can be loaded via [npm](https://www.npmjs.com/package/i18next-localstorag
 $ npm install i18next-localstorage-backend
 ```
 
+Create storage.js for Taro
+
+```js
+// ./storage.js
+import Taro from '@tarojs/taro';
+class Storage {
+  constructor(props) {}
+  setItem(key, value) {
+    try {
+        return Taro.setStorageSync(key, value);
+    } catch (e) {
+    // f.log('failed to get value for key "' + key + '" from localStorage.');
+    }
+    return undefined;
+  }
+  getItem(key) {
+    try {
+        return Taro.getStorageSync(key);
+    } catch (e) {
+    // f.log('failed to get value for key "' + key + '" from localStorage.');
+    }
+    return undefined;
+  }
+  removeItem(key) {
+    try {
+        return Taro.removeStorageSync(key);
+    } catch (e) {
+    // f.log('failed to get value for key "' + key + '" from localStorage.');
+    }
+    return undefined;
+  }
+  clear() {
+    return Taro.clearStorageSync(key, value);
+  }
+}
+export default new Storage();
+```
+
 Wiring up with the chained backend:
 
 ```js
@@ -20,21 +58,100 @@ import i18next from 'i18next';
 import Backend from 'i18next-chained-backend';
 import LocalStorageBackend from 'i18next-localstorage-backend'; // primary use cache
 import HttpApi from 'i18next-http-backend'; // fallback http load
+import Taro from '@tarojs/taro';
+import Storage from './storage'
 
+console.log('i18n');
 i18next
   .use(Backend)
   .init({
+    fallbackLng: ['cn'],
+    preload: ['cn'],
+    ns: 'memo',
+    defaultNS: 'memo',
+    keySeparator: false, // Allow usage of dots in keys
+    nsSeparator: false,
+    initImmediate: false,
     backend: {
       backends: [
         LocalStorageBackend,  // primary
         HttpApi               // fallback
       ],
       backendOptions: [{
-        /* below options */
+        // prefix for stored languages
+        prefix: 'i18next_',
+
+        // expiration
+        expirationTime: 7*24*60*60*1000,
+
+        // Version applied to all languages, can be overriden using the option `versions`
+        defaultVersion: '0.0.1',
+
+        // language versions
+        versions: { en: 'v1.2', cn: 'v1.1' },
+
+        // can be either window.localStorage or window.sessionStorage. Default: window.localStorage
+        store: Storage //window.localStorage
       }, {
-        loadPath: '/locales/{{lng}}/{{ns}}.json' // xhr load path for my own fallback
+        // path where resources get loaded from, or a function
+        // returning a path:
+        // function(lngs, namespaces) { return customPath; }
+        // the returned path will interpolate lng, ns if provided like giving a static path
+        loadPath: 'http://localhost:3333/locales/{{lng}}/{{ns}}.json', // xhr load path for my own fallback
+        // loadPath: '/locales/{{lng}}/{{ns}}.json',
+
+        // parse data after it has been fetched
+        // in example use https://www.npmjs.com/package/json5
+        // here it removes the letter a from the json (bad idea)
+        parse: function(data) { 
+          console.log('parse parse', data);
+          return data.replace(/a/g, '');
+        },
+
+        // path to post missing resources
+        addPath: 'locales/add/{{lng}}/{{ns}}',
+
+        // define how to stringify the data when adding missing resources
+        stringify: JSON.stringify,
+
+        // your backend server supports multiloading
+        // /locales/resources.json?lng=de+en&ns=ns1+ns2
+        allowMultiLoading: false, // set loadPath: '/locales/resources.json?lng={{lng}}&ns={{ns}}' to adapt to multiLoading
+
+        multiSeparator: '+',
+
+        // init option for fetch, for example
+        requestOptions: {
+          mode: 'cors',
+          credentials: 'same-origin',
+          cache: 'default',
+        },
+
+        // define a custom fetch function
+        request: async function (options, url, payload, callback) {
+          return await Taro.request({
+            url,
+            ...options,
+            fail: (err, res) => {
+              return callback(new Error('fetch json fail;', true), {
+                code: 400,
+                data: null
+              })
+            },
+            success: (res, err) => {
+              return callback(null, {
+                ...res,
+                status: res.statusCode,
+              });
+              return res
+            }
+          })
+        },
       }]
     }
+  }, (err, t) => {
+    if (err) return console.error(err)
+    // i18next.reloadResources();
   });
 ```
 
